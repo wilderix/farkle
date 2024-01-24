@@ -8,12 +8,13 @@ from collections import Counter
 from copy import deepcopy
 from random import randint
 
+# Import Local scripts
+from rules import rules
+
 
 # TODO:
 # 1. Add ENDGAME threshold to setup - DONE
 #    1a. Add ENDGAME functionality
-# 3. Fix bug that lets player keep unkeepable dice and go into HOT DICE illegally
-#    3a. Don't give any buttons (roll/bank/hotdice) besides the keepers/rollers if the current keep_set is not legal
 
 
 st.set_page_config(
@@ -26,6 +27,7 @@ INTIALIZED_TURN = {
     'rollers': [],
     'roller_lock': True,
     'keepers': [[], [], []],
+    'keepers_validity': [True, True, True],
     'keepers_score': 0,
     'farkle': False
 }
@@ -84,31 +86,11 @@ if 'rules' not in ss:
 
         scoring_text += f"* **{condition} = {rule} points**\n"
         scoring_text += f"  * {help}\n"
-    ss['rules'] = f"""
-## Rules
-    
-Farkle is a press-your-luck dice rolling game. Each player will roll 6 dice, initially. Each time they roll, they must keep some scoring dice set aside to get points on their turn. If they do not have any dice that qualify as scoring, they 'Farkle' and forfeit their turn and any score they have accumulated on their turn. At any point, the player may choose to bank their turn score and pass play to the next player.
-
-On each player's turn, they are allowed to reroll any dice they did not set aside to try for more points, up to 3 rolls total.
-
-## Scoring
-
-Scoring is based on sets (or individual dice, in the case of 1's and 5's) as such:
-
-{scoring_text}
-
-In order to start accumulating a score, you must earn at least {ss['scoreboard_starting_threshold']} points in a single turn. Until you reach this threshold for the first time the first time, play will simply pass to the next player, and you will remain at 0 points on the scoreboard.
-
-**Note:** You may go to the "Scoring" page in the menu on the sidebar to change the scoring rules above, but doing so will reset the game.
-
-## Hot Dice
-
-Hot Dice is when all 6 dice have been set aside as scoring. You may then roll all 6 dice again as if taking a new turn while still maintaining and adding to the score you have accumulated on your turn so far. However, rolling a Farkle will wipe out the entire score for the turn.
-
-## Farkle Penalty
-
-For every 3 farkles you get, you will lose {ss['three_farkle_penalty']} points. However, you can never go below 0 points.
-"""
+    ss['rules'] = rules.format(
+        scoring_text=scoring_text,
+        scoreboard_starting_threshold=ss['scoreboard_starting_threshold'],
+        three_farkle_penalty=ss['three_farkle_penalty']
+    )
 
 
 # Callback Functions
@@ -144,24 +126,24 @@ def callback_hot_dice():
     callback_roll(6)
 
 
-def callback_keep_rollers(form):
-    # Whick keeper list do we put these in?
-    keepers_index = 2 - ss['turn']['rolls_left']
-    rollers_len = len(ss['turn']['rollers'])
+# def callback_keep_rollers(form):
+#     # Whick keeper list do we put these in?
+#     keepers_index = 2 - ss['turn']['rolls_left']
+#     rollers_len = len(ss['turn']['rollers'])
 
-    # Go through the checkboxes and put them in a list
-    rollers_to_save = []
-    rollers_to_reroll = []
-    for d in range(rollers_len):
-        if ss.get(f'roller-check-{d}'):
-            rollers_to_save.append(ss['turn']['rollers'][d])
-        else:
-            rollers_to_reroll.append(ss['turn']['rollers'][d])
+#     # Go through the checkboxes and put them in a list
+#     rollers_to_save = []
+#     rollers_to_reroll = []
+#     for d in range(rollers_len):
+#         if ss.get(f'roller-check-{d}'):
+#             rollers_to_save.append(ss['turn']['rollers'][d])
+#         else:
+#             rollers_to_reroll.append(ss['turn']['rollers'][d])
 
-    ss['turn']['keepers'][keepers_index] = rollers_to_save[:]
-    ss['turn']['rollers'] = rollers_to_reroll[:]
-    ss['turn']['roller_lock'] = True
-    ss['valid_keepers'] = False
+#     ss['turn']['keepers'][keepers_index] = rollers_to_save[:]
+#     ss['turn']['rollers'] = rollers_to_reroll[:]
+#     ss['turn']['roller_lock'] = True
+#     ss['valid_keepers'] = False
 
 
 def callback_keeper_return(keep_set_idx, keeper_idx):
@@ -173,6 +155,9 @@ def callback_keeper_return(keep_set_idx, keeper_idx):
         ss['turn']['rollers'].append(pop)
     ss['turn']['rollers'].sort()
 
+    # Check validity of this keeper set
+    check_keeper_validity(keep_set_idx)
+
 
 def callback_keep_single(die_index):
    
@@ -180,54 +165,53 @@ def callback_keep_single(die_index):
     pop = ss['turn']['rollers'].pop(die_index)
     ss['turn']['keepers'][keepers_index].append(pop)
     
-    # If we used all the rollers, we have hot dice
-    if len(ss['turn']['rollers']) == 0:
-        ss['turn']['rolls_left'] = 3
+    # Check validity of this keeper set
+    check_keeper_validity(keepers_index)
 
 
-def callback_check_rollers_to_keep(form):
+# def callback_check_rollers_to_keep(form):
 
-    ss['valid_keepers'] = False
+#     ss['valid_keepers'] = False
 
-    # Go through the checkboxes and put them in a list
-    rollers_to_check = []
-    for d in range(6):
-        if ss.get(f'roller-check-{d}'):
-            rollers_to_check.append(ss['turn']['rollers'][d])
-    if not rollers_to_check:
-        form.warning("You didn't check any dice")
-    else:
-        # Check the potential keepers to see whether they are valid
-        # Basically check for singles/doubles that are not 1/5
-        # after checking for special 6-die rolls
-        validated = []
-        my_counter = Counter(rollers_to_check)
+#     # Go through the checkboxes and put them in a list
+#     rollers_to_check = []
+#     for d in range(6):
+#         if ss.get(f'roller-check-{d}'):
+#             rollers_to_check.append(ss['turn']['rollers'][d])
+#     if not rollers_to_check:
+#         form.warning("You didn't check any dice")
+#     else:
+#         # Check the potential keepers to see whether they are valid
+#         # Basically check for singles/doubles that are not 1/5
+#         # after checking for special 6-die rolls
+#         validated = []
+#         my_counter = Counter(rollers_to_check)
 
-        # 6-die combinations that are valid
-        if list(my_counter.keys()) == [1, 2, 3, 4, 5, 6]:
-            validated = [1 for _ in range(6)]
-        elif list(sorted(my_counter.values())) == [2, 4]:
-            validated = [1 for _ in range(6)]
-        elif list(my_counter.values()) == [2, 2, 2]:
-            validated = [1 for _ in range(6)]
-        elif list(my_counter.values()) == [3, 3]:
-            validated = [1 for _ in range(6)]
-        else:
-            for k, v in my_counter.items():
-                if v >= 3:
-                    validated.extend([1 for _ in range(v)])
-                elif v < 3 and k in (1, 5):
-                    validated.extend([1 for _ in range(v)])
-                elif v < 3 and k not in (1, 5):
-                    validated.extend([0 for _ in range(v)])
+#         # 6-die combinations that are valid
+#         if list(my_counter.keys()) == [1, 2, 3, 4, 5, 6]:
+#             validated = [1 for _ in range(6)]
+#         elif list(sorted(my_counter.values())) == [2, 4]:
+#             validated = [1 for _ in range(6)]
+#         elif list(my_counter.values()) == [2, 2, 2]:
+#             validated = [1 for _ in range(6)]
+#         elif list(my_counter.values()) == [3, 3]:
+#             validated = [1 for _ in range(6)]
+#         else:
+#             for k, v in my_counter.items():
+#                 if v >= 3:
+#                     validated.extend([1 for _ in range(v)])
+#                 elif v < 3 and k in (1, 5):
+#                     validated.extend([1 for _ in range(v)])
+#                 elif v < 3 and k not in (1, 5):
+#                     validated.extend([0 for _ in range(v)])
 
-        value = evaluate_scoring_sets(list_to_evaluate=rollers_to_check)
-        form.write(f"UPPER: Your keepers have a value of {value}")
-        if sum(validated) < len(rollers_to_check):
-            form.warning(f"Sets of 1 or 2 dice that are not [1]s or [5]s cannot be set aside. Uncheck them and press the button again.")
-        else:
-            ss['valid_keepers'] = True
-            form.write(f"LOWER: Your keepers have a value of {value}")
+#         value = evaluate_scoring_sets(list_to_evaluate=rollers_to_check)
+#         form.write(f"UPPER: Your keepers have a value of {value}")
+#         if sum(validated) < len(rollers_to_check):
+#             form.warning(f"Sets of 1 or 2 dice that are not [1]s or [5]s cannot be set aside. Uncheck them and press the button again.")
+#         else:
+#             ss['valid_keepers'] = True
+#             form.write(f"LOWER: Your keepers have a value of {value}")
 
 
 
@@ -251,9 +235,9 @@ def callback_player_number(old, new):
     ss['active_player_number'] = 1
 
 
-def callback_repick_rollers(form):
-    ss['valid_keepers'] = False
-    ss['roller_lock'] = False
+# def callback_repick_rollers(form):
+#     ss['valid_keepers'] = False
+#     ss['roller_lock'] = False
 
 
 def callback_roll(dice):
@@ -306,6 +290,34 @@ def check_for_farkle():
         if ss['players'][ss['active_player_number']]['farkles'] == 3:
             st.warning(f"You had 3 farkles! You lose {ss['three_farkle_penalty']} from your score.")
 
+def check_keeper_validity(keepers_index):
+    validated = []
+    my_counter = Counter(ss['turn']['keepers'][keepers_index])
+
+    # 6-die combinations that are valid
+    if list(my_counter.keys()) == [1, 2, 3, 4, 5, 6]:
+        validated = [1 for _ in range(6)]
+    elif list(sorted(my_counter.values())) == [2, 4]:
+        validated = [1 for _ in range(6)]
+    elif list(my_counter.values()) == [2, 2, 2]:
+        validated = [1 for _ in range(6)]
+    elif list(my_counter.values()) == [3, 3]:
+        validated = [1 for _ in range(6)]
+    else:
+        for counter_key, counter_value in my_counter.items():
+            if counter_value >= 3:
+                validated.extend([1 for _ in range(counter_value)])
+            elif counter_value < 3 and counter_key in (1, 5):
+                validated.extend([1 for _ in range(counter_value)])
+            elif counter_value < 3 and counter_key not in (1, 5):
+                validated.extend([0 for _ in range(counter_value)])
+
+    if sum(validated) == len(ss['turn']['keepers'][keepers_index]):
+        ss['turn']['keepers_validity'][keepers_index] = True
+    else:
+        st.warning(f"Sets of 1 or 2 dice that are not [1]s or [5]s cannot be set aside. Click those dice to take them out of the 'keepers'.")
+        ss['turn']['keepers_validity'][keepers_index] = False
+
 
 def farkle_penalty_score_reduction():
     ss['players'][ss['active_player_number']]['score'] -= ss['three_farkle_penalty']
@@ -346,142 +358,6 @@ def evaluate_scoring_sets(keeper_idx=None, list_to_evaluate=None):
     return current_value
 
 
-def play_your_turn(player_id=1):
-
-    player = ss['players'][player_id]
-
-    if not ss['turn']['farkle']:
-        
-        # How many dice are available to roll
-        dice = len(ss['turn']['rollers'])
-        if dice == 0:
-            dice = 6
-
-        if ss['turn']['rolls_left'] > 0 and not ss['turn']['farkle']:
-            disabler = False
-            if sum(sum(k) for k in ss['turn']['keepers']) and not ss['turn']['rollers']:
-                disabler = True
-            st.button(
-                label="Roll",
-                disabled=disabler,
-                on_click=callback_roll,
-                kwargs={'dice': dice}
-            )
-        
-        if ss['turn']['rollers']:
-            roller_columns = st.columns((1, 1, 1, 1, 1, 1, 7))
-            for d, die in enumerate(ss['turn']['rollers']):
-                roller_columns[d].button(
-                    label=str(die),
-                    key=f"roller-{d}",
-                    on_click=callback_keep_single,
-                    kwargs={'die_index': d}
-                )
-            # pick_rollers_to_keep = st.form('pick_rollers_to_keep')
-            # with pick_rollers_to_keep:
-            #     st.write("You rolled these dice:")
-            #     roller_columns = st.columns((1, 1, 1, 1, 1, 1, 6))
-            #     disable_the_rollers = ss['valid_keepers'] or ss['turn']['roller_lock']
-            #     for d, die in enumerate(ss['turn']['rollers']):
-
-            #         roller_columns[d].checkbox(
-            #             label=str(die),
-            #             key=f'roller-check-{d}',
-            #             disabled=disable_the_rollers
-            #         )
-            #     st.write("Check the dice you want to set aside, then click the button.")
-
-            #     if not ss['valid_keepers']:
-            #         st.form_submit_button(
-            #             label="Check these dice",
-            #             on_click=callback_check_rollers_to_keep,
-            #             kwargs={'form': pick_rollers_to_keep}
-            #             )
-            #     else:
-            #         st.form_submit_button(
-            #             label="Keep these dice",
-            #             type='primary',
-            #             on_click=callback_keep_rollers,
-            #             kwargs={'form': pick_rollers_to_keep}
-            #         )
-            #         st.form_submit_button(
-            #             label="Reset chosen dice",
-            #             on_click=callback_repick_rollers,
-            #             kwargs={'form': pick_rollers_to_keep}
-            #         )
-
-        
-        st.write("Keepers")
-        keepers_value = 0
-        active_keep_set = 2 - ss['turn']['rolls_left']
-        for ks, keep_set in enumerate(ss['turn']['keepers']):
-            disable_keeper = True
-            if ks == active_keep_set:
-                disable_keeper = False
-            if keep_set:
-                keep_set_columns = st.columns((3, 1, 1, 1, 1, 1, 1))
-                keep_set_value = evaluate_scoring_sets(keeper_idx=ks)
-                keepers_value += keep_set_value
-                keep_set_columns[0].write(f"Roll {ks+1} is worth {keep_set_value}")
-                for k, keeper in enumerate(keep_set):
-                    keep_set_columns[k+1].button(
-                        label=str(keeper),
-                        key=f"keeper-{ks}-{k}",
-                        on_click=callback_keeper_return,
-                        kwargs={'keep_set_idx': ks, 'keeper_idx': k},
-                        disabled=disable_keeper
-                    )
-            else:
-                keep_set_value = 0
-        
-        # Offer BANK if we have keeprs and are not in Hot Dice (all the rollers have turned into keepers)
-        if (
-            sum(sum(k) for k in ss['turn']['keepers'])  # we have any keepers
-            and ss['turn']['rollers']  # we have any rollers (i.e., we're not in "hot dice")
-            and (player['threshold_met']  # player is already on the scoreboard
-                 or keepers_value + ss['turn']['keepers_score'] >= ss['scoreboard_starting_threshold'])  # player could get on the scoreboard now
-        ):
-            st.button(
-                label=f"Bank {keepers_value + ss['turn']['keepers_score']}",
-                on_click=callback_bank,
-                kwargs={'player_id': player_id}
-            )
-        elif sum(sum(k) for k in ss['turn']['keepers']) and not ss['turn']['rollers']:
-            st.write("You have set asice all 6 dice, therefore you must press your luck!")
-            st.write("Press the Hot Dice! button to roll again!")
-            st.write(f"Don't worry, we'll hold onto the {keepers_value + ss['turn']['keepers_score']} points and add them to whatever else you set aside. Just in case you don't Farkle!")
-            st.button(
-                label=f"Hot Dice!",
-                on_click=callback_hot_dice
-                # kwargs={'keepers_value': keepers_value}
-            )
-        else:
-            if sum(sum(k) for k in ss['turn']['keepers']):
-                st.write(f"Your turn score of {keepers_value + ss['turn']['keepers_score']} doesn't meet the {ss['scoreboard_starting_threshold']} threshold to get on the scoreboard.")
-                st.button(
-                    label='Next Player',
-                    on_click=callback_next_player
-                )
-                
-
-    else:
-
-        st.warning("Farkle!")
-        farkle_roller_columns = st.columns((1, 1, 1, 1, 1, 1, 6))
-        for d, die in enumerate(ss['turn']['rollers']):
-            farkle_roller_columns[d].button(
-                label=str(die),
-                disabled=True,
-                key=f"roller-{d}"
-            )
-        st.button(
-            label='Next Player',
-            on_click=callback_next_player
-        )
-
-    return player['name']
-
-
 # Sidebar
 with st.sidebar:
     st.selectbox(
@@ -515,6 +391,7 @@ with st.sidebar:
 # Main Screen
 # st.header("Farkle")
 st.subheader(ss['menu_choice'])
+
 
 # Setup
 if ss['menu_choice'] == 'Setup':
@@ -639,10 +516,119 @@ elif ss['menu_choice'] == 'Scoring':
 
 # Play
 elif ss['menu_choice'] == 'Play':
+    player = ss['players'][ss['active_player_number']]
+    player_name = player['name']
+    player_id = ss['active_player_number']
 
-    player_name = ss['players'][ss['active_player_number']]['name']
-    st.write(f"It's {player_name}'s turn")
-    this_player = play_your_turn(ss['active_player_number'])
+    st.subheader(f"It's {player_name}'s turn")
+
+    if not ss['turn']['farkle']:
+        
+        # How many dice are available to roll
+        dice = len(ss['turn']['rollers'])
+        if dice == 0:
+            dice = 6
+
+        # Check for Hot Dice
+        hot_dice = False
+        if sum(sum(k) for k in ss['turn']['keepers']) and not ss['turn']['rollers']:
+            hot_dice = True
+        
+        # keeper_list_index
+        keeper_list_idx = 2 - ss['turn']['rolls_left']
+    
+        # Show Roll button when:
+        if (
+            ss['turn']['rolls_left'] > 0  # You have any rolls_left
+            and not ss['turn']['farkle']  # You don't have a farkle
+            and not hot_dice  # You don't have hot dice
+            and ss['turn']['keepers_validity'][keeper_list_idx]  # Your keepers are legit
+        ):
+            st.button(
+                label="Roll",
+                on_click=callback_roll,
+                kwargs={'dice': dice}
+            )
+        
+        if ss['turn']['rollers']:
+            roller_columns = st.columns((1, 1, 1, 1, 1, 1, 7))
+            for d, die in enumerate(ss['turn']['rollers']):
+                roller_columns[d].button(
+                    label=str(die),
+                    key=f"roller-{d}",
+                    on_click=callback_keep_single,
+                    kwargs={'die_index': d}
+                )
+        
+        st.write("Keepers")
+        keepers_value = 0
+        active_keep_set = 2 - ss['turn']['rolls_left']
+        for ks, keep_set in enumerate(ss['turn']['keepers']):
+            disable_keeper = True
+            if ks == active_keep_set:
+                disable_keeper = False
+            if keep_set:
+                keep_set_columns = st.columns((3, 1, 1, 1, 1, 1, 1))
+                keep_set_value = evaluate_scoring_sets(keeper_idx=ks)
+                keepers_value += keep_set_value
+                keep_set_columns[0].write(f"Roll {ks+1} is worth {keep_set_value}")
+                for k, keeper in enumerate(keep_set):
+                    keep_set_columns[k+1].button(
+                        label=str(keeper),
+                        key=f"keeper-{ks}-{k}",
+                        on_click=callback_keeper_return,
+                        kwargs={'keep_set_idx': ks, 'keeper_idx': k},
+                        disabled=disable_keeper
+                    )
+            else:
+                keep_set_value = 0
+        
+        # Offer BANK if we have keeprs and are not in Hot Dice (all the rollers have turned into keepers)
+        if (
+            sum(sum(k) for k in ss['turn']['keepers'])  # we have any keepers
+            and ss['turn']['rollers']  # we have any rollers (i.e., we're not in "hot dice")
+            and ss['turn']['keepers_validity'][keeper_list_idx]  # We have valid keepers
+            and (player['threshold_met']  # player is already on the scoreboard
+                or keepers_value + ss['turn']['keepers_score'] >= ss['scoreboard_starting_threshold'])  # player could get on the scoreboard now
+        ):
+            st.button(
+                label=f"Bank {keepers_value + ss['turn']['keepers_score']}",
+                on_click=callback_bank,
+                kwargs={'player_id': player_id}
+            )
+        elif sum(sum(k) for k in ss['turn']['keepers']) and not ss['turn']['rollers']:
+            st.write("You have set asice all 6 dice, therefore you must press your luck!")
+            st.write("Press the Hot Dice! button to roll again!")
+            st.write(f"Don't worry, we'll hold onto the {keepers_value + ss['turn']['keepers_score']} points and add them to whatever else you set aside. Just in case you don't Farkle!")
+            st.button(
+                label=f"Hot Dice!",
+                on_click=callback_hot_dice
+                # kwargs={'keepers_value': keepers_value}
+            )
+        else:
+            if sum(sum(k) for k in ss['turn']['keepers']):
+                st.write(f"Your turn score of {keepers_value + ss['turn']['keepers_score']} doesn't meet the {ss['scoreboard_starting_threshold']} threshold to get on the scoreboard.")
+                st.button(
+                    label='Next Player',
+                    on_click=callback_next_player
+                )
+                
+
+    else:
+
+        st.warning("Farkle!")
+        farkle_roller_columns = st.columns((1, 1, 1, 1, 1, 1, 6))
+        for d, die in enumerate(ss['turn']['rollers']):
+            farkle_roller_columns[d].button(
+                label=str(die),
+                disabled=True,
+                key=f"roller-{d}"
+            )
+        st.button(
+            label='Next Player',
+            on_click=callback_next_player
+        )
+
 
 else:
     st.subheader("What just happened?")
