@@ -56,6 +56,8 @@ if 'turn' not in ss:
     ss['turn'] = deepcopy(INTIALIZED_TURN)
 if 'valid_keepers' not in ss:
     ss['valid_keepers'] = False
+if 'warning' not in ss:
+    ss['warning'] = ''
 if 'default_scoring_parameters' not in ss:
     ss['default_scoring_parameters'] = {
         'Single 1': {'rule': '100', 'help': "Each individual [1] will be worth 100 points unless it is part of a more valuable set"},
@@ -71,7 +73,6 @@ if 'default_scoring_parameters' not in ss:
     }
 if 'scoring_parameters' not in ss:
     ss['scoring_parameters'] = deepcopy(ss['default_scoring_parameters'])
-
 if 'rules' not in ss:
     scoring_text = ""
     for condition, rule_dict in ss['scoring_parameters'].items():
@@ -241,12 +242,13 @@ def callback_player_number(old, new):
 
 
 def callback_roll(dice):
+    ss['warning'] = ''
     ss['turn']['rollers'] = [randint(1, 6) for d in range(dice)]
     ss['turn']['rollers'].sort()
     ss['turn']['rolls_left'] -= 1
     check_for_farkle()
     ss['turn']['roller_lock'] = False
-
+    
 
 def callback_scoring_parameters(condition, new_rule):
     ss['scoring_parameters'][condition]['rule'] = ss[new_rule]
@@ -260,6 +262,7 @@ def callback_scoring_parameters_reset():
 # Local Functions
 def advance_active_player_number():
     ss['turn'] = deepcopy(INTIALIZED_TURN)
+    ss['warning'] = ''
     if ss['active_player_number'] == max(ss['players']):
         ss['active_player_number'] = 1
     else:
@@ -286,9 +289,14 @@ def check_for_farkle():
     else:
         ss['turn']['farkle'] = True
         ss['players'][ss['active_player_number']]['farkles'] +=1
+        if ss['warning']:
+            ss['warning'] += '\n'
+        ss['warning'] += 'Farkle!'
 
         if ss['players'][ss['active_player_number']]['farkles'] == 3:
-            st.warning(f"You had 3 farkles! You lose {ss['three_farkle_penalty']} from your score.")
+            if ss['warning']:
+                ss['warning'] += '\n'
+            ss['warning'] += f"You had 3 farkles! You lose {ss['three_farkle_penalty']} from your score."
 
 def check_keeper_validity(keepers_index):
     validated = []
@@ -311,11 +319,14 @@ def check_keeper_validity(keepers_index):
                 validated.extend([1 for _ in range(counter_value)])
             elif counter_value < 3 and counter_key not in (1, 5):
                 validated.extend([0 for _ in range(counter_value)])
-
+            else:
+                validated.extend([0 for _ in range(counter_value)])
+    
     if sum(validated) == len(ss['turn']['keepers'][keepers_index]):
         ss['turn']['keepers_validity'][keepers_index] = True
+        ss['warning'] = ''
     else:
-        st.warning(f"Sets of 1 or 2 dice that are not [1]s or [5]s cannot be set aside. Click those dice to take them out of the 'keepers'.")
+        ss['warning'] = f"Sets of 1 or 2 dice that are not [1]s or [5]s cannot be set aside. Click those dice to take them out of the keepers."
         ss['turn']['keepers_validity'][keepers_index] = False
 
 
@@ -520,7 +531,19 @@ elif ss['menu_choice'] == 'Play':
     player_name = player['name']
     player_id = ss['active_player_number']
 
-    st.subheader(f"It's {player_name}'s turn")
+    # Layout Elements
+    play_layout_header = st.container()
+    play_layout_rollers = st.container()
+    play_layout_buttons = st.container()
+    play_layout_keepers = st.container()
+    play_layout_warning = st.container()
+
+    if ss['warning']:
+        play_layout_warning.warning(ss['warning'])
+    else:
+        play_layout_warning.empty()
+
+    play_layout_header.subheader(f"It's {player_name}'s turn")
 
     if not ss['turn']['farkle']:
         
@@ -544,14 +567,14 @@ elif ss['menu_choice'] == 'Play':
             and not hot_dice  # You don't have hot dice
             and ss['turn']['keepers_validity'][keeper_list_idx]  # Your keepers are legit
         ):
-            st.button(
+            play_layout_buttons.button(
                 label="Roll",
                 on_click=callback_roll,
                 kwargs={'dice': dice}
             )
         
         if ss['turn']['rollers']:
-            roller_columns = st.columns((1, 1, 1, 1, 1, 1, 7))
+            roller_columns = play_layout_rollers.columns((1, 1, 1, 1, 1, 1, 7))
             for d, die in enumerate(ss['turn']['rollers']):
                 roller_columns[d].button(
                     label=str(die),
@@ -560,7 +583,7 @@ elif ss['menu_choice'] == 'Play':
                     kwargs={'die_index': d}
                 )
         
-        st.write("Keepers")
+        play_layout_keepers.write("Keepers")
         keepers_value = 0
         active_keep_set = 2 - ss['turn']['rolls_left']
         for ks, keep_set in enumerate(ss['turn']['keepers']):
@@ -568,7 +591,7 @@ elif ss['menu_choice'] == 'Play':
             if ks == active_keep_set:
                 disable_keeper = False
             if keep_set:
-                keep_set_columns = st.columns((3, 1, 1, 1, 1, 1, 1))
+                keep_set_columns = play_layout_keepers.columns((3, 1, 1, 1, 1, 1, 1))
                 keep_set_value = evaluate_scoring_sets(keeper_idx=ks)
                 keepers_value += keep_set_value
                 keep_set_columns[0].write(f"Roll {ks+1} is worth {keep_set_value}")
@@ -583,7 +606,7 @@ elif ss['menu_choice'] == 'Play':
             else:
                 keep_set_value = 0
         
-        # Offer BANK if we have keeprs and are not in Hot Dice (all the rollers have turned into keepers)
+        # Offer BANK if we have keepers and are not in Hot Dice (all the rollers have turned into keepers)
         if (
             sum(sum(k) for k in ss['turn']['keepers'])  # we have any keepers
             and ss['turn']['rollers']  # we have any rollers (i.e., we're not in "hot dice")
@@ -591,32 +614,31 @@ elif ss['menu_choice'] == 'Play':
             and (player['threshold_met']  # player is already on the scoreboard
                 or keepers_value + ss['turn']['keepers_score'] >= ss['scoreboard_starting_threshold'])  # player could get on the scoreboard now
         ):
-            st.button(
+            play_layout_buttons.button(
                 label=f"Bank {keepers_value + ss['turn']['keepers_score']}",
                 on_click=callback_bank,
                 kwargs={'player_id': player_id}
             )
         elif sum(sum(k) for k in ss['turn']['keepers']) and not ss['turn']['rollers']:
-            st.write("You have set asice all 6 dice, therefore you must press your luck!")
-            st.write("Press the Hot Dice! button to roll again!")
-            st.write(f"Don't worry, we'll hold onto the {keepers_value + ss['turn']['keepers_score']} points and add them to whatever else you set aside. Just in case you don't Farkle!")
-            st.button(
+            play_layout_warning.write("You have set asice all 6 dice, therefore you must press your luck!")
+            play_layout_warning.write("Press the Hot Dice! button to roll again!")
+            play_layout_warning.write(f"Don't worry, we'll hold onto the {keepers_value + ss['turn']['keepers_score']} points and add them to whatever else you set aside. Just in case you don't Farkle!")
+            play_layout_buttons.button(
                 label=f"Hot Dice!",
                 on_click=callback_hot_dice
                 # kwargs={'keepers_value': keepers_value}
             )
         else:
-            if sum(sum(k) for k in ss['turn']['keepers']):
+            if sum(sum(k) for k in ss['turn']['keepers']) and not player['threshold_met']:
                 st.write(f"Your turn score of {keepers_value + ss['turn']['keepers_score']} doesn't meet the {ss['scoreboard_starting_threshold']} threshold to get on the scoreboard.")
                 st.button(
                     label='Next Player',
                     on_click=callback_next_player
                 )
-                
-
+        
     else:
 
-        st.warning("Farkle!")
+        ss['warning'] += "Farkle!"
         farkle_roller_columns = st.columns((1, 1, 1, 1, 1, 1, 6))
         for d, die in enumerate(ss['turn']['rollers']):
             farkle_roller_columns[d].button(
